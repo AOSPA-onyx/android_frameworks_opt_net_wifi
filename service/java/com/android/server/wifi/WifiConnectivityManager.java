@@ -18,6 +18,7 @@ package com.android.server.wifi;
 
 import static com.android.internal.util.Preconditions.checkNotNull;
 import static com.android.server.wifi.ClientModeImpl.WIFI_WORK_SOURCE;
+import static com.android.server.wifi.WifiSettingsConfigStore.WIFI_WHITELIST_ROAMING_ENABLED;
 
 import android.annotation.NonNull;
 import android.app.AlarmManager;
@@ -31,6 +32,7 @@ import android.net.wifi.WifiManager;
 import android.net.wifi.WifiManager.DeviceMobilityState;
 import android.net.wifi.WifiNetworkSuggestion;
 import android.net.wifi.WifiScanner;
+import android.net.wifi.p2p.WifiP2pManager;
 import android.net.wifi.WifiScanner.PnoSettings;
 import android.net.wifi.WifiScanner.ScanSettings;
 import android.net.wifi.hotspot2.PasspointConfiguration;
@@ -160,6 +162,7 @@ public class WifiConnectivityManager {
     private boolean mAutoJoinEnabled = false; // disabled by default, enabled by external triggers
     private boolean mRunning = false;
     private boolean mScreenOn = false;
+    private int mMiracastMode = WifiP2pManager.MIRACAST_DISABLED;
     private int mWifiState = WIFI_STATE_UNKNOWN;
     private int mInitialScanState = INITIAL_SCAN_STATE_COMPLETE;
     private boolean mAutoJoinEnabledExternal = true; // enabled by default
@@ -315,8 +318,9 @@ public class WifiConnectivityManager {
 
         localLog(listenerName + " onResults: start network selection");
 
+        List<ScanDetail> filteredScans = mStateMachine.qtiGetFilteredScan(scanDetails);
         List<WifiCandidates.Candidate> candidates = mNetworkSelector.getCandidatesFromScan(
-                scanDetails, bssidBlocklist, mWifiInfo, mStateMachine.isConnected(),
+                filteredScans, bssidBlocklist, mWifiInfo, mStateMachine.isConnected(),
                 mStateMachine.isDisconnected(), mUntrustedConnectionAllowed);
         mLatestCandidates = candidates;
         mLatestCandidatesTimestampMs = mClock.getElapsedSinceBootMillis();
@@ -920,7 +924,8 @@ public class WifiConnectivityManager {
         if (currentConnectedNetwork != null
                 && (currentConnectedNetwork.networkId == candidate.networkId
                 //TODO(b/36788683): re-enable linked configuration check
-                /* || currentConnectedNetwork.isLinked(candidate) */)) {
+                 || (mWifiInjector.getSettingsConfigStore().get(WIFI_WHITELIST_ROAMING_ENABLED)
+                      && currentConnectedNetwork.isLinked(candidate)))) {
             // Framework initiates roaming only if firmware doesn't support
             // {@link android.net.wifi.WifiManager#WIFI_FEATURE_CONTROL_ROAMING}.
             if (mConnectivityHelper.isFirmwareRoamingSupported()) {
@@ -936,7 +941,7 @@ public class WifiConnectivityManager {
             // Framework specifies the connection target BSSID if firmware doesn't support
             // {@link android.net.wifi.WifiManager#WIFI_FEATURE_CONTROL_ROAMING} or the
             // candidate configuration contains a specified BSSID.
-            if (mConnectivityHelper.isFirmwareRoamingSupported() && (candidate.BSSID == null
+            if (!mStateMachine.isActiveDualMode() && mConnectivityHelper.isFirmwareRoamingSupported() && (candidate.BSSID == null
                       || candidate.BSSID.equals(ClientModeImpl.SUPPLICANT_BSSID_ANY))) {
                 targetBssid = ClientModeImpl.SUPPLICANT_BSSID_ANY;
                 localLog("connectToNetwork: Connect to " + candidate.SSID + ":" + targetBssid
@@ -1253,6 +1258,17 @@ public class WifiConnectivityManager {
 
     // Start a single scan
     private void startForcedSingleScan(boolean isFullBandScan, WorkSource workSource) {
+        // Any scans will impact wifi performance including WFD performance,
+        // So at least ignore scans triggered internally by ConnectivityManager
+        // when WFD session is active. We still allow connectivity scans initiated
+        // by other work source.
+        if (WIFI_WORK_SOURCE.equals(workSource) &&
+            (mMiracastMode == WifiP2pManager.MIRACAST_SOURCE ||
+            mMiracastMode == WifiP2pManager.MIRACAST_SINK)) {
+            Log.d(TAG,"ignore connectivity scan, MiracastMode:" + mMiracastMode);
+            return;
+        }
+
         mPnoScanListener.resetLowRssiNetworkRetryDelay();
 
         ScanSettings settings = new ScanSettings();
@@ -1581,6 +1597,15 @@ public class WifiConnectivityManager {
         mOpenNetworkNotifier.handleScreenStateChanged(screenOn);
 
         startConnectivityScan(SCAN_ON_SCHEDULE);
+    }
+
+    /**
+     * Save current miracast mode, it will be used to ignore
+     * connectivity scan during the time when miracast is enabled.
+     */
+    public void saveMiracastMode(int mode) {
+        Log.d(TAG,"saveMiracastMode: mode=" + mode);
+        mMiracastMode = mode;
     }
 
     /**

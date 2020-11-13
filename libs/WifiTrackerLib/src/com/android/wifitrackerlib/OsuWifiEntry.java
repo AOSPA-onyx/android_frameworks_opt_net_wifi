@@ -267,11 +267,15 @@ class OsuWifiEntry extends WifiEntry {
         }
 
         final ScanResult bestScanResult = getBestScanResultByLevel(scanResults);
+        if (bestScanResult != null) {
+            updateTransitionModeCapa(bestScanResult);
+        }
         if (getConnectedState() == CONNECTED_STATE_DISCONNECTED) {
             mLevel = bestScanResult != null
                     ? mWifiManager.calculateSignalLevel(bestScanResult.level)
                     : WIFI_LEVEL_UNREACHABLE;
         }
+        updateWifiGenerationInfo(mCurrentScanResults);
         notifyOnUpdated();
     }
 

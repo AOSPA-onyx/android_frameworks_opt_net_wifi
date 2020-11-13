@@ -29,6 +29,7 @@ import android.util.Log;
 import com.android.server.wifi.util.NativeUtil;
 
 import java.util.ArrayList;
+import android.util.Pair;
 
 abstract class SupplicantStaIfaceCallbackV1_3Impl extends
         android.hardware.wifi.supplicant.V1_3.ISupplicantStaIfaceCallback.Stub {
@@ -368,11 +369,27 @@ abstract class SupplicantStaIfaceCallbackV1_3Impl extends
         mStaIfaceHal.logCallback("onStateChanged_1_3");
         SupplicantState newSupplicantState =
                 supplicantHidlStateToFrameworkState(newState);
-        WifiSsid wifiSsid =
-                WifiSsid.createFromByteArray(NativeUtil.byteArrayFromArrayList(ssid));
+        WifiSsid wifiSsid = // wifigbk++
+                WifiGbk.createWifiSsidFromByteArray(NativeUtil.byteArrayFromArrayList(ssid));
         String bssidStr = NativeUtil.macAddressFromByteArray(bssid);
         mStateIsFourwayV13 =
                 (newState == ISupplicantStaIfaceCallback.State.FOURWAY_HANDSHAKE);
+
+        if (id != mStaIfaceHal.getCurrentNetworkRemoteId(mIfaceName)) {
+            Log.i(TAG, "Network id changed, newState = " + newState
+                        + ", SSID = " + wifiSsid + ", bssid = " + bssidStr
+                        + ", networkId = " + id);
+            ArrayList<Pair<SupplicantStaNetworkHal, WifiConfiguration>> linkedNetworkHandles =
+                    mStaIfaceHal.getLinkedNetworksHandles(mIfaceName);
+
+            for (Pair<SupplicantStaNetworkHal, WifiConfiguration> pair : linkedNetworkHandles) {
+                if (pair.first.getNetworkId() != id) continue;
+
+                Log.i(TAG, "make linked network as current network");
+                mStaIfaceHal.updateCurrentNetworkHandles(mIfaceName, pair);
+            }
+        }
+
         if (newSupplicantState == SupplicantState.COMPLETED) {
             if (filsHlpSent) {
                 mWifiMonitor.broadcastFilsNetworkConnectionEvent(

@@ -127,6 +127,7 @@ import android.net.wifi.hotspot2.pps.Credential;
 import android.net.wifi.hotspot2.pps.HomeSp;
 import android.os.Binder;
 import android.os.Build;
+import android.os.Binder;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
@@ -851,6 +852,9 @@ public class WifiServiceImplTest extends WifiBaseTest {
      */
     @Test
     public void testSetWifiEnabledNoToggle() throws Exception {
+        // Set false because setWifiEnabled() avoids being called in checkAndStartWifi().
+        when(mSettingsStore.isWifiToggleEnabled()).thenReturn(false);
+        mWifiServiceImpl.checkAndStartWifi();
         when(mSettingsStore.handleWifiToggled(eq(true))).thenReturn(false);
         when(mContext.checkPermission(eq(android.Manifest.permission.NETWORK_SETTINGS),
                 anyInt(), anyInt())).thenReturn(PackageManager.PERMISSION_GRANTED);
